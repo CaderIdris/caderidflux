@@ -194,7 +194,11 @@ class InfluxQuery:
             query.add_field(fields)
             for key, value in bool_filters.items():
                 if isinstance(value, dict):
-                    pass
+                    query.add_specific_filter(
+                            key=key,
+                            value=value.get('Value'),
+                            col=value.get('Col')
+                            )
                 else:
                     query.add_filter(key, value)
             if range_filters:
