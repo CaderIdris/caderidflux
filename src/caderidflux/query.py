@@ -344,7 +344,7 @@ class CustomFluxQuery:
             f'  |> map(fn: (r) => ({{ r with "{col}": if '
             f'r["{key}"] == "{value}"'
             f' then r["{col}"]'
-            f' else debug.null(type: "float")}})'
+            f' else debug.null(type: "float")}}))'
         )
 
     def add_filter_range(self, filter_fields):
@@ -456,7 +456,7 @@ class CustomFluxQuery:
             f'  |> map(fn: (r) => ({{ r with "{name}": if '
             f'r["_time"] >= {start} and r["_time"] <= '
             f'{end} then (r["{name}"] * float(v: {slope}) + {offset}'
-            f' else r["{name}"]}})'
+            f' else r["{name}"]}}))'
         )
 
     def scale_measurements(
