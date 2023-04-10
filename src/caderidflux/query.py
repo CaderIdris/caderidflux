@@ -300,7 +300,7 @@ class CustomFluxQuery:
             measurement (str): Measurement tag where data is stored
         """
         self._query_list = [
-            'import "internal/debug',
+            'import "internal/debug"',
             f'from(bucket: "{bucket}")',
             f"  |> range(start: {dt_to_rfc3339(start)}, "
             f"stop: {dt_to_rfc3339(end)})",
@@ -342,9 +342,9 @@ class CustomFluxQuery:
         """
         self._query_list.append(
             f'  |> map(fn: (r) => ({{ r with "{col}": if '
-            f'(r["{key}"] == {value}'
+            f'r["{key}"] == {value}'
             f' then r["{col}"]'
-            f' else debug.null(type: "float")}}))'
+            f' else debug.null(type: "float")}})'
         )
 
     def add_filter_range(self, filter_fields):
@@ -454,9 +454,9 @@ class CustomFluxQuery:
         offset = scale_conf.get('Offset', 0)
         self._query_list.append(
             f'  |> map(fn: (r) => ({{ r with "{name}": if '
-            f'(r["_time"] >= {start} and r["_time"] <= '
-            f'{end} then (r["{name}"] * float(v: {slope})) + {offset}'
-            f' else r["{name}"]}}))'
+            f'r["_time"] >= {start} and r["_time"] <= '
+            f'{end} then (r["{name}"] * float(v: {slope}) + {offset}'
+            f' else r["{name}"]}})'
         )
 
     def scale_measurements(
