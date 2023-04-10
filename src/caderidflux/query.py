@@ -213,13 +213,14 @@ class InfluxQuery:
                 query=query.return_query(),
                 org=self._config["Organisation"]
             )
-            data: pd.DataFrame = query_return.drop(
-                    ['result', 'table', '_start', '_stop'], axis=1
-                    ).set_index('_time')
-            if multiindex:
-                m_idx = data.columns.str.split('_', expand=True)
-                data.columns = m_idx
-            self._measurements = pd.concat([self._measurements, data])
+            if not query_return.empty:
+                data: pd.DataFrame = query_return.drop(
+                        ['result', 'table', '_start', '_stop'], axis=1
+                        ).set_index('_time')
+                if multiindex:
+                    m_idx = data.columns.str.split('_', expand=True)
+                    data.columns = m_idx
+                self._measurements = pd.concat([self._measurements, data])
 
         self._measurements = self._measurements[
                 ~self._measurements.index.duplicated(keep='first')
