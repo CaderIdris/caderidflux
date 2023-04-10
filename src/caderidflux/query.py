@@ -342,7 +342,7 @@ class CustomFluxQuery:
         """
         self._query_list.append(
             f'  |> map(fn: (r) => ({{ r with "{col}": if '
-            f'r["{key}"] == {value}'
+            f'r["{key}"] == "{value}"'
             f' then r["{col}"]'
             f' else debug.null(type: "float")}})'
         )
