@@ -193,8 +193,6 @@ class InfluxQuery:
             query = CustomFluxQuery(start_t, end_t, bucket, measurement)
             query.add_field(fields)
             query.add_groups(groups + ["_field"])
-            query.add_window(win_range, win_func, time_starting=hour_beginning)
-            query.add_pivot(groups + ["_field"])
             for key, value in bool_filters.items():
                 if isinstance(value, dict):
                     query.add_specific_filter(
@@ -204,6 +202,8 @@ class InfluxQuery:
                             )
                 else:
                     query.add_filter(key, value)
+            query.add_window(win_range, win_func, time_starting=hour_beginning)
+            query.add_pivot(groups + ["_field"])
             if range_filters:
                 query.add_filter_range(range_filters)
 
