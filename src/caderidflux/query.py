@@ -196,7 +196,6 @@ class InfluxQuery:
             for key, value in bool_filters.items():
                 if not isinstance(value, dict):
                     query.add_filter(key, value)
-            query.add_window(win_range, win_func, time_starting=hour_beginning)
             query.add_pivot(groups + ["_field"])
             for key, value in bool_filters.items():
                 if isinstance(value, dict):
@@ -207,9 +206,10 @@ class InfluxQuery:
                             )
             if range_filters:
                 query.add_filter_range(range_filters)
-
             for scale_conf in scaling:
                 query.add_scaling(scale_conf)
+            query.add_window(win_range, win_func, time_starting=hour_beginning)
+            print(query.return_query())
             query_return = self._query_api.query_data_frame(
                 query=query.return_query(),
                 org=self._config["Organisation"]
@@ -447,9 +447,13 @@ class CustomFluxQuery:
         """
         name = scale_conf['Field']
         start = scale_conf.get('Start', self._start)
+        if isinstance(start, str):
+            start = dt.datetime.strptime(start, '%m/%d/%y %H:%M:%S')
         if isinstance(start, dt.datetime):
             start = dt_to_rfc3339(start)
         end = scale_conf.get('End', self._end)
+        if isinstance(end, str):
+            end = dt.datetime.strptime(end, '%m/%d/%y %H:%M:%S')
         if isinstance(end, dt.datetime):
             end = dt_to_rfc3339(end)
         slope = scale_conf.get('Slope', 1)
