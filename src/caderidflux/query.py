@@ -26,7 +26,7 @@ __status__ = "Beta"
 
 import dateutil.relativedelta as rd
 import datetime as dt
-from typing import Any, Literal, Optional, Union
+from typing import Any, List, Literal, Optional, Union
 
 from influxdb_client import InfluxDBClient
 import numpy as np
@@ -59,7 +59,7 @@ class InfluxQuery:
         instance
     """
 
-    def __init__(self, config):
+    def __init__(self, ip: str, port: str, token: str, organisation: str):
         """Initialises class
 
         Keyword Arguments:
@@ -72,13 +72,21 @@ class InfluxQuery:
             corresponding organisation
 
         """
-        self._config = config
+        if port != "":
+            url = f"{ip}:{port}"
+        else:
+            url = ip
+
         self._client = InfluxDBClient(
-            url=f"{config['IP']}:{config['Port']}",
-            token=config["Token"],
-            org=config["Organisation"],
+            url=url,
+            token=token,
+            org=organisation,
             timeout=15000000,
         )
+        self.ip = ip
+        self.port = port
+        self.token = token
+        self.organisation = organisation
         self._query_api = self._client.query_api()
         self._measurements: pd.DataFrame = pd.DataFrame()
 
@@ -90,7 +98,7 @@ class InfluxQuery:
             query (str): Flux query
         """
         query_return = self._query_api.query(
-            query=query, org=self._config["Organisation"]
+            query=query, org=self.organisation
         )
         # query_return should only have one table so this just selects the
         # first one
@@ -116,13 +124,14 @@ class InfluxQuery:
         measurement: str,
         fields: Union[list[str], str],
         groups: Union[list[str], str],
-        win_range: str,
-        win_func: str,
+        win_range: str = "1h",
+        win_func: str = "mean",
         bool_filters: dict[str, str] = dict(),
         range_filters: list[dict[str, Union[str, float, int, bool]]] = list(),
         hour_beginning: bool = False,
         scaling: list[dict[str, Union[str, int, float]]] = list(),
         multiindex: bool = False,
+        aggregate: bool = False,
         time_split: Optional[
             Literal[
                 'hour',
@@ -191,12 +200,17 @@ class InfluxQuery:
                     time_dict[time_split]['Timedelta'] * (t_split + 1)
                     )
             query = CustomFluxQuery(start_t, end_t, bucket, measurement)
-            query.add_field(fields)
+            extra_fields = [
+                    fr['Field'] for fr in range_filters
+                    if fr['Field'] not in fields
+                ]
+            all_fields = fields.copy()
+            all_fields.extend(extra_fields)
+            query.add_field(all_fields)
             query.add_groups(groups + ["_field"])
             for key, value in bool_filters.items():
                 if not isinstance(value, dict):
                     query.add_filter(key, value)
-            query.add_pivot(groups + ["_field"])
             for key, value in bool_filters.items():
                 if isinstance(value, dict):
                     query.add_specific_filter(
@@ -205,19 +219,32 @@ class InfluxQuery:
                             col=value.get('Col')
                             )
             if range_filters:
-                query.add_filter_range(range_filters)
+                query.add_filter_range(range_filters, groups)
+            if aggregate:
+                query.add_window(
+                        win_range,
+                        win_func,
+                        time_starting=hour_beginning
+                        )
+            if len(fields) > 1 or multiindex or len(groups) == 0:
+                query.add_pivot(groups + ["_field"])
+            else:
+                query.add_pivot(groups)
             for scale_conf in scaling:
                 query.add_scaling(scale_conf)
-            query.add_window(win_range, win_func, time_starting=hour_beginning)
             print(query.return_query())
             query_return = self._query_api.query_data_frame(
                 query=query.return_query(),
-                org=self._config["Organisation"]
+                org=self.organisation
             )
             if not query_return.empty:
                 data: pd.DataFrame = query_return.drop(
                         ['result', 'table', '_start', '_stop'], axis=1
                         ).set_index('_time')
+                data.index = pd.to_datetime(data.index)
+                data = data.drop(extra_fields, axis=1)
+                if len(fields) == 1 and "_field" in data.columns:
+                    data = data.drop(["_field"], axis=1)
                 if multiindex:
                     m_idx = data.columns.str.split('_', expand=True)
                     data.columns = m_idx
@@ -225,7 +252,7 @@ class InfluxQuery:
 
         self._measurements = self._measurements[
                 ~self._measurements.index.duplicated(keep='first')
-                ]
+                ].sort_index()
 
     def return_measurements(self):
         """Returns the measurements downloaded from the database
@@ -303,6 +330,7 @@ class CustomFluxQuery:
         """
         self._query_list = [
             'import "internal/debug"',
+            'import "experimental"',
             f'from(bucket: "{bucket}")',
             f"  |> range(start: {dt_to_rfc3339(start)}, "
             f"stop: {dt_to_rfc3339(end)})",
@@ -343,13 +371,13 @@ class CustomFluxQuery:
         """
         """
         self._query_list.append(
-            f'  |> map(fn: (r) => ({{ r with "{col}": if '
-            f'r["{key}"] == "{value}"'
-            f' then r["{col}"]'
+            f'  |> map(fn: (r) => ({{ r with "_value": if '
+            f'r["{key}"] == "{value}" or r["_field"] != "{col}"'
+            f' then r["_value"]'
             f' else debug.null(type: "float")}}))'
         )
 
-    def add_filter_range(self, filter_fields):
+    def add_filter_range(self, filter_fields, groups):
         """Adds filter range to the query
 
         Adds a filter to the query that only selects measurements when one
@@ -360,6 +388,7 @@ class CustomFluxQuery:
 
             filter_fields (list): Contains all fields used to filter field data
         """
+        self.add_pivot(["_field"])
         for filter_field in filter_fields:
             name = filter_field["Field"]
             min = filter_field["Min"]
@@ -370,6 +399,7 @@ class CustomFluxQuery:
                 f'  |> filter(fn: (r) => r["{name}"] >{min_equals_sign}'
                 f' {min} and r["{name}"] <{max_equals_sign} {max})'
             )
+        self._query_list.append('  |> experimental.unpivot()')
 
     def add_groups(self, groups):
         """Adds group tag to query
@@ -448,12 +478,12 @@ class CustomFluxQuery:
         name = scale_conf['Field']
         start = scale_conf.get('Start', self._start)
         if isinstance(start, str):
-            start = dt.datetime.strptime(start, '%m/%d/%y %H:%M:%S')
+            start = dt.datetime.strptime(start, '%Y/%m/%d %H:%M:%S')
         if isinstance(start, dt.datetime):
             start = dt_to_rfc3339(start)
         end = scale_conf.get('End', self._end)
         if isinstance(end, str):
-            end = dt.datetime.strptime(end, '%m/%d/%y %H:%M:%S')
+            end = dt.datetime.strptime(end, '%Y/%m/%d %H:%M:%S')
         if isinstance(end, dt.datetime):
             end = dt_to_rfc3339(end)
         slope = scale_conf.get('Slope', 1)
@@ -461,62 +491,8 @@ class CustomFluxQuery:
         self._query_list.append(
             f'  |> map(fn: (r) => ({{ r with "{name}": if '
             f'r["_time"] >= {start} and r["_time"] <= '
-            f'{end} then (r["{name}"] * float(v: {slope}) + {offset}'
+            f'{end} then (r["{name}"] * float(v: {slope})) + float(v: {offset})'
             f' else r["{name}"]}}))'
-        )
-
-    def scale_measurements(
-            self,
-            slope=1,
-            offset=0,
-            power=1,
-            start: Union[dt.datetime, str] = "",
-            end: Union[str, dt.datetime] = ""
-            ):
-        """Scales measurements. If start or stop is provided in RFC3339
-        format, they are scaled within that range only.
-
-        This function uses the map function to scale the measurements, within a
-        set range. If a start and/or end range is not provided they default to
-        the classes start and end attributes.
-
-        Keyword Arguments:
-            slope (int/float): Number to multiply measurements by
-
-            offset (int/float): Number to offset scaled measurements by
-
-            power (int): Exponent to raise the value to before scaling with
-            slope and offset
-
-            start (datetime): Start date to scale measurements from
-            (Default: None, not added to query)
-
-            end (datetime): End date to scale measurements until
-            (Default: None, not added to query)
-        """
-        if not isinstance(start, dt.datetime):
-            start = self._start
-        if not isinstance(end, dt.datetime):
-            end = self._end
-        if isinstance(power, str):
-            power = 1
-        if slope != 1:
-            slope_str = f" * {float(slope)}"
-        else:
-            slope_str = ""
-        if offset != 0:
-            off_str = f" + {float(offset)}"
-        else:
-            off_str = ""
-        value_str = '(r["_value"]'
-        if power != 1:
-            value_str = f"{value_str} ^ {float(power)}"
-        value_str = f"{value_str})"
-        self._query_list.append(
-            f'  |> map(fn: (r) => ({{ r with "_value": if '
-            f'(r["_time"] >= {dt_to_rfc3339(start)} and r["_time"] <= '
-            f"{dt_to_rfc3339(end)}) then ({value_str}{slope_str}){off_str}"
-            f' else r["_value"]}}))'
         )
 
     def add_yield(self, name):
